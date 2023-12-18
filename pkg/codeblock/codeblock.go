@@ -2,11 +2,7 @@ package codeblock
 
 import (
 	"errors"
-	"fmt"
-	"os"
-	"os/exec"
 	"strings"
-	"text/template"
 
 	ts "github.com/smacker/go-tree-sitter"
 )
@@ -147,108 +143,6 @@ func (cb *Codeblock) GetMarkdownLines() [][]byte {
 	return newLines
 }
 
-func GetCommandForCodeblock(codeblock *Codeblock, envVars map[string]string) (*exec.Cmd, error) {
-	var outCommand *exec.Cmd
-	var err error
-	switch codeblock.Language {
-	case "sh", "zsh", "bash":
-		outCommand, err = getShellCommand(codeblock, envVars)
-  case "go":
-    outCommand, err = getGoCommand(codeblock, envVars)
-	default:
-		return nil, fmt.Errorf("Language %s can't be executed", codeblock.Language)
-	}
-
-	return outCommand, err
-}
-
-func getShellCommand(codeblock *Codeblock, envVars map[string]string) (*exec.Cmd, error) {
-	var outCommand *exec.Cmd
-	var err error
-
-	tmpfile, err := os.CreateTemp(os.TempDir(), "granite.tmpfile")
-
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = tmpfile.WriteString(codeblock.Text)
-	if err != nil {
-		return nil, err
-	}
-
-	var shellCmd string
-	if strings.HasPrefix(codeblock.Opts[CB_OPT_WORKDIR], CB_OPT_WORKDIR_DOCKER_PREFIX) {
-		cwdSplit := strings.Split(codeblock.Opts[CB_OPT_WORKDIR], ":")
-		if len(cwdSplit) != 2 {
-			return nil, fmt.Errorf("Malformed cwd entry")
-		}
-
-		var sb strings.Builder
-		for k, v := range envVars {
-			sb.WriteString(fmt.Sprintf(" -e '%s=%s'", k, v))
-		}
-
-		containerName := cwdSplit[1]
-		if envVars[containerName] != "" {
-			containerName = envVars[containerName]
-		}
-		shellCmd = fmt.Sprintf(
-			"podman cp %[1]s %[2]s:/tmpscript && podman exec -i %[3]s %[2]s bash -c 'source /tmpscript'",
-			tmpfile.Name(),
-			containerName,
-			sb.String(),
-		)
-	} else {
-		shellCmd = fmt.Sprintf(
-			"source %s",
-			tmpfile.Name(),
-		)
-
-	}
-
-	outCommand = exec.Command(DefaultShell, "-i", "-c", shellCmd)
-  outCommand.Env = append(outCommand.Env, os.Environ()...)
-	for k, v := range envVars {
-		outCommand.Env = append(outCommand.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	return outCommand, err
-
-}
-
-var mainGoTpl string = `
-package main
-
-func main() {
-{{ . }}
-}
-  `
-
-func getGoCommand(codeblock *Codeblock, envVars map[string]string) (*exec.Cmd, error){
-	var outCommand *exec.Cmd
-	var err error
-  
-  
-
-  tmpDirPath, err := os.MkdirTemp(os.TempDir(), "mdrun_go")
-  if err != nil {
-    return nil, err
-  }
-  
-  tpl := template.Must(template.New("mainGo").Parse(mainGoTpl))
-   
-  mainGo, err := os.Create(tmpDirPath + string(os.PathSeparator) + "main.go" )
-  if err != nil {
-    return nil, err
-  }
-  defer mainGo.Close()
-
-  tpl.Execute(mainGo, codeblock.Text)
-
-  return outCommand, err
-
-}
 
 func getChildNodesWithType(node *ts.Node, nodeType string) []*ts.Node {
 

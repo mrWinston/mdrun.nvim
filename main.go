@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"time"
 
 	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/mrWinston/mdrun.nvim/pkg/markdown"
+	"github.com/mrWinston/mdrun.nvim/pkg/runner"
 	"github.com/neovim/go-client/nvim"
 	"github.com/neovim/go-client/nvim/plugin"
 	log "github.com/sirupsen/logrus"
@@ -22,6 +24,16 @@ const EXTMARK_NS = "codeblock_run"
 var GLYPHS_CLOCK_ANIMATION []string = []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
 var GLYPH_CHECKMARK string = ""
 var GLYPH_ERROR string = "󱂑"
+
+var CodeRunners map[string]runner.CodeblockRunner = map[string]runner.CodeblockRunner{}
+
+
+func GetCommandForCodeblock(codeblock *codeblock.Codeblock, envVars map[string]string) (*exec.Cmd, error) {
+  if runner, ok := CodeRunners[codeblock.Language]; ok {
+    return runner.GetCommand(codeblock, envVars)
+  }
+	return nil, fmt.Errorf("Language %s can't be executed", codeblock.Language)
+}
 
 func RunCodeblock(v *nvim.Nvim, args []string) {
 	logger.Infof("Called RunCodeblock with args: %v", args)
@@ -168,7 +180,7 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	}
 
 	envVars := codeblockUnderCursor.PopulateOpts(sourceCode)
-	command, err := codeblock.GetCommandForCodeblock(codeblockUnderCursor, envVars)
+	command, err := GetCommandForCodeblock(codeblockUnderCursor, envVars)
 	if err != nil {
 		logger.Errorf("Error Creating command: %v", err)
 		return
@@ -279,6 +291,16 @@ func GetCodeblocks(sourceCode []byte) ([]*codeblock.Codeblock, error) {
 func main() {
 	logger = log.New()
 	logger.Debug("hello there!")
+  shRunner := &runner.ShellRunner{
+    DefaultShell: "zsh",
+  }
+  goRunner := &runner.GoRunner{}
+
+  CodeRunners["sh"] = shRunner
+  CodeRunners["zsh"] = shRunner
+  CodeRunners["bash"] = shRunner
+  CodeRunners["go"] = goRunner
+
 	plugin.Main(func(p *plugin.Plugin) error {
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunRunCodeblock"}, RunCodeblock)
 		return nil
