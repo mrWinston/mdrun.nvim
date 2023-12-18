@@ -15,15 +15,16 @@ import (
 	ts "github.com/smacker/go-tree-sitter"
 )
 
-
 var logger *log.Logger
 
 const EXTMARK_NS = "codeblock_run"
 
+var GLYPHS_CLOCK_ANIMATION []string = []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
+var GLYPH_CHECKMARK string = ""
+var GLYPH_ERROR string = "󱂑"
 
 func RunCodeblock(v *nvim.Nvim, args []string) {
 	logger.Infof("Called RunCodeblock with args: %v", args)
-
 
 	currentBuffer, err := v.CurrentBuffer()
 	if err != nil {
@@ -72,11 +73,11 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 
 	if _, ok := codeblockUnderCursor.Opts["ID"]; !ok {
 		codeblockUnderCursor.Opts["ID"] = fmt.Sprintf("%d", time.Now().UnixMilli())
-
+    
 		err = v.SetBufferLines(
 			currentBuffer,
 			codeblockUnderCursor.StartLine,
-			codeblockUnderCursor.EndLine,
+			codeblockUnderCursor.EndLine+1,
 			false,
 			codeblockUnderCursor.GetMarkdownLines(),
 		)
@@ -87,9 +88,6 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 		}
 	}
 
-	clockGlyphs := []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
-	checkmarkGlyph := ""
-  
 	if err != nil {
 		logger.Errorf("unable to set extmark: %v", err)
 	}
@@ -97,13 +95,13 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	defer ticker.Stop()
 	signTickerDone := make(chan bool)
 	defer func() {
-		select{
-    case signTickerDone <- true:
-      return
-    default:
-      return
+		select {
+		case signTickerDone <- true:
+			return
+		default:
+			return
 		}
-    //v.DeleteBufferExtmark(currentBuffer, namespaceID, extmarkID)
+		//v.DeleteBufferExtmark(currentBuffer, namespaceID, extmarkID)
 	}()
 
 	var targetCodeBlock *codeblock.Codeblock
@@ -114,11 +112,11 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 			case <-signTickerDone:
 				return
 			case <-ticker.C:
-				curGlyph := clockGlyphs[currentRun%len(clockGlyphs)]
-        SetExtmarkOnCodeblock(v, codeblockUnderCursor, curGlyph, "DiagnosticInfo")
-        if targetCodeBlock != nil {
-          SetExtmarkOnCodeblock(v, targetCodeBlock, curGlyph, "DiagnosticInfo")
-        }
+				curGlyph := GLYPHS_CLOCK_ANIMATION[currentRun%len(GLYPHS_CLOCK_ANIMATION)]
+				SetExtmarkOnCodeblock(v, codeblockUnderCursor, curGlyph, "DiagnosticInfo")
+				if targetCodeBlock != nil {
+					SetExtmarkOnCodeblock(v, targetCodeBlock, curGlyph, "DiagnosticInfo")
+				}
 				currentRun++
 			}
 		}
@@ -178,15 +176,14 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 
 	outbytes, err := command.CombinedOutput()
 	signTickerDone <- true
-  errorGlyph := "󱂑"
-  var outGlyph string
-  var outHighlight string
+	var outGlyph string
+	var outHighlight string
 	if err != nil {
-    outGlyph = errorGlyph
-    outHighlight = "DiagnosticError"
+		outGlyph = GLYPH_ERROR
+		outHighlight = "DiagnosticError"
 	} else {
-    outGlyph = checkmarkGlyph
-    outHighlight = "DiagnosticOk"
+		outGlyph = GLYPH_CHECKMARK
+		outHighlight = "DiagnosticOk"
 	}
 
 	targetCodeBlock.Text = string(outbytes)
@@ -194,13 +191,13 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	err = v.SetBufferLines(
 		currentBuffer,
 		targetCodeBlock.StartLine,
-		targetCodeBlock.EndLine,
+		targetCodeBlock.EndLine+1,
 		false,
 		targetCodeBlock.GetMarkdownLines(),
 	)
 
-  SetExtmarkOnCodeblock(v, codeblockUnderCursor, outGlyph, outHighlight)
-  SetExtmarkOnCodeblock(v, targetCodeBlock, outGlyph, outHighlight)
+	SetExtmarkOnCodeblock(v, codeblockUnderCursor, outGlyph, outHighlight)
+	SetExtmarkOnCodeblock(v, targetCodeBlock, outGlyph, outHighlight)
 
 	if err != nil {
 		logger.Errorf("Error writing output: %v", err)
@@ -208,33 +205,33 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 }
 
 func SetExtmarkOnCodeblock(v *nvim.Nvim, cb *codeblock.Codeblock, text string, hlgroup string) error {
-  currentBuffer, err := v.CurrentBuffer()
-  if err != nil {
-    return err
-  }
+	currentBuffer, err := v.CurrentBuffer()
+	if err != nil {
+		return err
+	}
 
 	namespaceID, err := v.CreateNamespace(EXTMARK_NS)
 	if err != nil {
 		return err
 	}
-  var extmarkID int 
-  if cb.Opts[codeblock.CB_OPT_ID] != "" {
-    extmarkID, err = strconv.Atoi(cb.Opts[codeblock.CB_OPT_ID])
-  } else {
-    extmarkID, err = strconv.Atoi(cb.Opts[codeblock.CB_OPT_SOURCE])
-    extmarkID ++
-  }
+	var extmarkID int
+	if cb.Opts[codeblock.CB_OPT_ID] != "" {
+		extmarkID, err = strconv.Atoi(cb.Opts[codeblock.CB_OPT_ID])
+	} else {
+		extmarkID, err = strconv.Atoi(cb.Opts[codeblock.CB_OPT_SOURCE])
+		extmarkID++
+	}
 
 	if err != nil {
 		return err
 	}
 
-  _, err = v.SetBufferExtmark(currentBuffer, namespaceID, cb.StartLine, 0, map[string]interface{}{
-    "id":        extmarkID,
-    "virt_text": [][]interface{}{{text, hlgroup}},
-  })
-  
-  return err
+	_, err = v.SetBufferExtmark(currentBuffer, namespaceID, cb.StartLine, 0, map[string]interface{}{
+		"id":        extmarkID,
+		"virt_text": [][]interface{}{{text, hlgroup}},
+	})
+
+	return err
 }
 
 func GetCodeblocks(sourceCode []byte) ([]*codeblock.Codeblock, error) {
@@ -280,8 +277,8 @@ func GetCodeblocks(sourceCode []byte) ([]*codeblock.Codeblock, error) {
 }
 
 func main() {
-  logger = log.New()
-  logger.Debug("hello there!")
+	logger = log.New()
+	logger.Debug("hello there!")
 	plugin.Main(func(p *plugin.Plugin) error {
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunRunCodeblock"}, RunCodeblock)
 		return nil

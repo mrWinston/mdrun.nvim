@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"text/template"
 
 	ts "github.com/smacker/go-tree-sitter"
 )
@@ -53,7 +54,7 @@ func NewCodeblockFromNode(node *ts.Node, sourcecode []byte) (*Codeblock, error) 
 	for i := 0; i < int(node.ChildCount()); i++ {
 		currentChild := node.Child(i)
 		if currentChild == nil {
-			break
+			continue
 		}
 
 		if currentChild.Type() == "info_string" {
@@ -141,7 +142,7 @@ func (cb *Codeblock) GetMarkdownLines() [][]byte {
 	}
 	newLines = newLines[:len(newLines)-1]
 	newLines = append(newLines, []byte("```"))
-	newLines = append(newLines, []byte(""))
+//	newLines = append(newLines, []byte(""))
 
 	return newLines
 }
@@ -152,6 +153,8 @@ func GetCommandForCodeblock(codeblock *Codeblock, envVars map[string]string) (*e
 	switch codeblock.Language {
 	case "sh", "zsh", "bash":
 		outCommand, err = getShellCommand(codeblock, envVars)
+  case "go":
+    outCommand, err = getGoCommand(codeblock, envVars)
 	default:
 		return nil, fmt.Errorf("Language %s can't be executed", codeblock.Language)
 	}
@@ -211,6 +214,39 @@ func getShellCommand(codeblock *Codeblock, envVars map[string]string) (*exec.Cmd
 	}
 
 	return outCommand, err
+
+}
+
+var mainGoTpl string = `
+package main
+
+func main() {
+{{ . }}
+}
+  `
+
+func getGoCommand(codeblock *Codeblock, envVars map[string]string) (*exec.Cmd, error){
+	var outCommand *exec.Cmd
+	var err error
+  
+  
+
+  tmpDirPath, err := os.MkdirTemp(os.TempDir(), "mdrun_go")
+  if err != nil {
+    return nil, err
+  }
+  
+  tpl := template.Must(template.New("mainGo").Parse(mainGoTpl))
+   
+  mainGo, err := os.Create(tmpDirPath + string(os.PathSeparator) + "main.go" )
+  if err != nil {
+    return nil, err
+  }
+  defer mainGo.Close()
+
+  tpl.Execute(mainGo, codeblock.Text)
+
+  return outCommand, err
 
 }
 
