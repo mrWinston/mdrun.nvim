@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
+	"os"
+	"path"
 	"strconv"
 	"time"
 
@@ -17,8 +18,6 @@ import (
 	ts "github.com/smacker/go-tree-sitter"
 )
 
-var logger *log.Logger
-
 const EXTMARK_NS = "codeblock_run"
 
 var GLYPHS_CLOCK_ANIMATION []string = []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
@@ -27,47 +26,35 @@ var GLYPH_ERROR string = "󱂑"
 
 var CodeRunners map[string]runner.CodeblockRunner = map[string]runner.CodeblockRunner{}
 
-
-func GetCommandForCodeblock(codeblock *codeblock.Codeblock, envVars map[string]string) (*exec.Cmd, error) {
-  if runner, ok := CodeRunners[codeblock.Language]; ok {
-    return runner.GetCommand(codeblock, envVars)
-  }
-	return nil, fmt.Errorf("Language %s can't be executed", codeblock.Language)
+func errChain[T any](err error, fn func() (T, error)) (T, error) {
+	var zeroValue T
+	if err != nil {
+		return zeroValue, err
+	}
+	return fn()
 }
 
 func RunCodeblock(v *nvim.Nvim, args []string) {
-	logger.Infof("Called RunCodeblock with args: %v", args)
+	log.Infof("Called RunCodeblock with args: %v", args)
 
-	currentBuffer, err := v.CurrentBuffer()
-	if err != nil {
-		logger.Errorf("Unable to get current buffer: %v", err)
-		return
-	}
+	currentBuffer, err := errChain[nvim.Buffer](nil, func() (nvim.Buffer, error) { return v.CurrentBuffer() })
+	currentWindow, err := errChain[nvim.Window](err, func() (nvim.Window, error) { return v.CurrentWindow() })
+	lines, err := errChain[[][]byte](err, func() ([][]byte, error) { return v.BufferLines(currentBuffer, 0, -1, false) })
+	cursorPosition, err := errChain[[2]int](err, func() ([2]int, error) { return v.WindowCursor(currentWindow) })
 
-	currentWindow, err := v.CurrentWindow()
 	if err != nil {
-		logger.Errorf("Failed nvim call %v", err)
-		return
-	}
-
-	lines, err := v.BufferLines(currentBuffer, 0, -1, false)
-	if err != nil {
-		logger.Errorf("Unable to get buffer lines: %v", err)
-		return
-	}
-
-	cursorPosition, err := v.WindowCursor(currentWindow)
-	if err != nil {
-		logger.Errorf("Failed nvim call %v", err)
+		log.Errorf("Error communicating with nvim: %v", err)
 		return
 	}
 
 	sourceCode := bytes.Join(lines, []byte("\n"))
+	// add a newline to the end, otherwise parsing gets weird when codeblock ends on the last line of the file
+	sourceCode = append(sourceCode, []byte("\n")...)
 
 	codeblocks, err := GetCodeblocks(sourceCode)
 
 	if err != nil {
-		logger.Errorf("Error while parsing codeblocks: %v", err)
+		log.Errorf("Error while parsing codeblocks: %v", err)
 		return
 	}
 
@@ -83,9 +70,11 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 		return
 	}
 
+	log.Debugf("Codeblock Rows: %d, %d", codeblockUnderCursor.StartLine, codeblockUnderCursor.EndLine)
+
 	if _, ok := codeblockUnderCursor.Opts["ID"]; !ok {
 		codeblockUnderCursor.Opts["ID"] = fmt.Sprintf("%d", time.Now().UnixMilli())
-    
+
 		err = v.SetBufferLines(
 			currentBuffer,
 			codeblockUnderCursor.StartLine,
@@ -95,13 +84,13 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 		)
 
 		if err != nil {
-			logger.Errorf("Couldn't set nvim bufferlines: %v", err)
+			log.Errorf("Couldn't set nvim bufferlines: %v", err)
 			return
 		}
 	}
 
 	if err != nil {
-		logger.Errorf("unable to set extmark: %v", err)
+		log.Errorf("unable to set extmark: %v", err)
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -153,14 +142,14 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 
 		lines, err = v.BufferLines(currentBuffer, 0, -1, false)
 		if err != nil {
-			logger.Errorf("Unable to get buffer lines: %v", err)
+			log.Errorf("Unable to get buffer lines: %v", err)
 			return
 		}
 		sourceCode = bytes.Join(lines, []byte("\n"))
 
 		codeblocks, err = GetCodeblocks(sourceCode)
 		if err != nil {
-			logger.Errorf("Error while parsing codeblocks: %v", err)
+			log.Errorf("Error while parsing codeblocks: %v", err)
 			return
 		}
 
@@ -175,18 +164,22 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	}
 
 	if targetCodeBlock == nil {
-		logger.Error("Output codeblock wasnt found")
+		log.Error("Output codeblock wasnt found")
 		return
 	}
 
 	envVars := codeblockUnderCursor.PopulateOpts(sourceCode)
-	command, err := GetCommandForCodeblock(codeblockUnderCursor, envVars)
-	if err != nil {
-		logger.Errorf("Error Creating command: %v", err)
+	runner, ok := CodeRunners[codeblockUnderCursor.Language]
+	if !ok {
+		log.Errorf("Language %s can't be executed", codeblockUnderCursor.Language)
 		return
 	}
 
-	outbytes, err := command.CombinedOutput()
+	outbytes, err := runner.Run(v, codeblockUnderCursor, envVars)
+  if outbytes[len(outbytes) -1 ] != 0x0a {
+		outbytes = append(outbytes, 0x0a)
+  }
+
 	signTickerDone <- true
 	var outGlyph string
 	var outHighlight string
@@ -200,10 +193,12 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 
 	targetCodeBlock.Text = string(outbytes)
 	targetCodeBlock.Opts[codeblock.CB_OPT_LAST_RUN] = time.Now().Format(time.RFC3339)
+
+	log.Debugf("Target Codeblock Rows: %d, %d", targetCodeBlock.StartLine, targetCodeBlock.EndLine)
 	err = v.SetBufferLines(
 		currentBuffer,
 		targetCodeBlock.StartLine,
-		targetCodeBlock.EndLine+1,
+		targetCodeBlock.EndLine,
 		false,
 		targetCodeBlock.GetMarkdownLines(),
 	)
@@ -212,7 +207,7 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	SetExtmarkOnCodeblock(v, targetCodeBlock, outGlyph, outHighlight)
 
 	if err != nil {
-		logger.Errorf("Error writing output: %v", err)
+		log.Errorf("Error writing output: %v", err)
 	}
 }
 
@@ -289,17 +284,42 @@ func GetCodeblocks(sourceCode []byte) ([]*codeblock.Codeblock, error) {
 }
 
 func main() {
-	logger = log.New()
-	logger.Debug("hello there!")
-  shRunner := &runner.ShellRunner{
-    DefaultShell: "zsh",
-  }
-  goRunner := &runner.GoRunner{}
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	logFilePath := path.Join(homedir, ".mdrun.log")
+	f, err := os.OpenFile(
+		logFilePath,
+		os.O_RDWR|os.O_CREATE|os.O_APPEND,
+		0666,
+	)
+	if err != nil {
+		log.Fatalf("Can't open log file")
+	}
+	log.SetOutput(f)
+	log.SetLevel(log.DebugLevel)
+	log.Debug("hello there!")
+	shRunner := &runner.ShellRunner{
+		DefaultShell: "zsh",
+	}
+	goRunner := &runner.GoRunner{}
+	luaRunner := &runner.LuaRunner{}
+	cRunner := &runner.CRunner{}
+  cppRunner := &runner.CppRunner{}
+  rustRunner := &runner.RustRunner{}
+  haskellRunner := &runner.HaskellRunner{}
 
-  CodeRunners["sh"] = shRunner
-  CodeRunners["zsh"] = shRunner
-  CodeRunners["bash"] = shRunner
-  CodeRunners["go"] = goRunner
+	CodeRunners["sh"] = shRunner
+	CodeRunners["zsh"] = shRunner
+	CodeRunners["bash"] = shRunner
+	CodeRunners["go"] = goRunner
+	CodeRunners["lua"] = luaRunner
+	CodeRunners["c"] = cRunner
+	CodeRunners["c++"] = cppRunner
+	CodeRunners["cpp"] = cppRunner
+	CodeRunners["rust"] = rustRunner
+	CodeRunners["haskell"] = haskellRunner
 
 	plugin.Main(func(p *plugin.Plugin) error {
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunRunCodeblock"}, RunCodeblock)
