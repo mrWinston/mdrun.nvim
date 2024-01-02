@@ -176,7 +176,7 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	}
 
 	outbytes, err := runner.Run(v, codeblockUnderCursor, envVars)
-  if outbytes[len(outbytes) -1 ] != 0x0a {
+  if len(outbytes) == 0 || outbytes[len(outbytes) -1 ] != 0x0a {
 		outbytes = append(outbytes, 0x0a)
   }
 
