@@ -78,7 +78,7 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 		err = v.SetBufferLines(
 			currentBuffer,
 			codeblockUnderCursor.StartLine,
-			codeblockUnderCursor.EndLine+1,
+			codeblockUnderCursor.EndLine,
 			false,
 			codeblockUnderCursor.GetMarkdownLines(),
 		)
@@ -133,12 +133,13 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	}
 
 	if targetCodeBlock == nil {
-		v.SetBufferLines(currentBuffer, codeblockUnderCursor.EndLine+1, codeblockUnderCursor.EndLine+1, false, [][]byte{
-			[]byte("```out SOURCE=" + codeblockUnderCursor.Opts["ID"]),
-			[]byte(""),
-			[]byte("```"),
-			[]byte(""),
-		})
+    outlanguage, ok := codeblockUnderCursor.Opts["OUT"]
+    if ! ok {
+      outlanguage = "out"
+    }
+    newCbLines := fmt.Sprintf("\n```%s SOURCE=%s\n\n```\n", outlanguage, codeblockUnderCursor.Opts["ID"])
+    log.Infof("Replacing line: %d", codeblockUnderCursor.EndLine)
+		v.SetBufferLines(currentBuffer, codeblockUnderCursor.EndLine, codeblockUnderCursor.EndLine, false, bytes.Split([]byte(newCbLines), []byte("\n")))
 
 		lines, err = v.BufferLines(currentBuffer, 0, -1, false)
 		if err != nil {
@@ -184,6 +185,9 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	var outGlyph string
 	var outHighlight string
 	if err != nil {
+    log.Errorf("Go an error during Execution: %v", err)
+    outbytes = append(outbytes, []byte(err.Error())...)
+    outbytes = append(outbytes, 0x0a)
 		outGlyph = GLYPH_ERROR
 		outHighlight = "DiagnosticError"
 	} else {
