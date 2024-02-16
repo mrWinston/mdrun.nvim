@@ -1,14 +1,14 @@
 package runner
 
 import (
+	"os/exec"
 
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/neovim/go-client/nvim"
 )
 
 type CppRunner struct {}
 
-func (cr *CppRunner) Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error) {
+func (cr *CppRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
 
   compiledRunner := &CompiledRunner{
   	Compiler:   "g++",
@@ -16,7 +16,7 @@ func (cr *CppRunner) Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[stri
   	FileName:   "main.cpp",
   	Name:       "cpp",
   }
-  return compiledRunner.Run(v, cb, envVars)
+  return compiledRunner.CreateCommand(v, code, opts, envVars)
 }
 
 

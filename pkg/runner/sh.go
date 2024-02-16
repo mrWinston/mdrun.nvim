@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/neovim/go-client/nvim"
 )
 
@@ -20,8 +19,7 @@ type ShellRunner struct {
 }
 
 
-func (sh *ShellRunner) Run(v *nvim.Nvim,cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error) {
-
+func (sh *ShellRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
 	var outCommand *exec.Cmd
 	var err error
 
@@ -32,14 +30,17 @@ func (sh *ShellRunner) Run(v *nvim.Nvim,cb *codeblock.Codeblock, envVars map[str
 	}
   defer tmpfile.Close()
 
-	_, err = tmpfile.WriteString(cb.Text)
+	_, err = tmpfile.WriteString(code)
 	if err != nil {
 		return nil, err
 	}
 
 	var shellCmd string
-	if isRunInDocker(cb) {
-		cwdSplit := strings.Split(cb.Opts[SHELLRUNNER_OPT_WORKDIR], ":")
+  if strings.HasPrefix(
+		opts[SHELLRUNNER_OPT_WORKDIR],
+		SHELLRUNNER_OPT_WORKDIR_DOCKER_PREFIX,
+	) {
+		cwdSplit := strings.Split(opts[SHELLRUNNER_OPT_WORKDIR], ":")
 		if len(cwdSplit) != 2 {
 			return nil, fmt.Errorf("Malformed cwd entry")
 		}
@@ -70,12 +71,5 @@ func (sh *ShellRunner) Run(v *nvim.Nvim,cb *codeblock.Codeblock, envVars map[str
 	outCommand = exec.Command(sh.DefaultShell, "-i", "-c", shellCmd)
   outCommand.Env = CreateEnvArray(envVars)
   
-	return outCommand.CombinedOutput()
-}
-
-func isRunInDocker(cb *codeblock.Codeblock) bool {
-	return strings.HasPrefix(
-		cb.Opts[SHELLRUNNER_OPT_WORKDIR],
-		SHELLRUNNER_OPT_WORKDIR_DOCKER_PREFIX,
-	)
+	return outCommand, nil
 }

@@ -2,14 +2,17 @@ package runner
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path"
+	"strings"
 
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/neovim/go-client/nvim"
 )
 
 type CodeblockRunner interface {
-	Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error)
+	CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error)
 }
 
 func CreateEnvArray(envVars map[string]string) []string {
@@ -20,4 +23,24 @@ func CreateEnvArray(envVars map[string]string) []string {
 	}
 
   return out
+}
+
+func CreateTmpFile(filename string, text string) (mainFilePath string, err error) {
+  splitted := strings.Split(filename, ".")
+  suffix := splitted[len(splitted) - 1]
+	tmpDirPath, err := os.MkdirTemp(os.TempDir(), "mdrun_" + suffix)
+	if err != nil {
+		return "", err
+	}
+
+	mainFilePath = path.Join(tmpDirPath, filename)
+
+	main, err := os.Create(mainFilePath)
+	if err != nil {
+		return "", err
+	}
+	defer main.Close()
+	_, err = io.WriteString(main, text)
+  
+  return mainFilePath, err
 }

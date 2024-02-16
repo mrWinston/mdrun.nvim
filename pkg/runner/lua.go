@@ -2,10 +2,8 @@ package runner
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/neovim/go-client/nvim"
 )
 
@@ -15,35 +13,22 @@ const (
 	LUARUNNER_OPT_IN_NVIM = "IN_NVIM"
 )
 
-func (lu *LuaRunner) Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error) {
-	if isInNvim(cb) {
+func (lu *LuaRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
+	if opts[LUARUNNER_OPT_IN_NVIM] == "true" {
 		var execResult interface{}
-		err := v.ExecLua(cb.Text, execResult)
+		err := v.ExecLua(code, execResult)
+
 		if err != nil {
-			return []byte(fmt.Sprintf("Error is: %v\n", err)), err
+      return exec.Command("/bin/sh", "-c", fmt.Sprintf("echo 'Got an error: %v'; exit 1",err)), nil
 		}
-		return []byte(fmt.Sprintf("Result is: %v\n", execResult)), err
+    return exec.Command("/bin/sh", "-c", fmt.Sprintf("echo 'Result: %+v'; exit 0",execResult)), nil
 	}
   
-	var outCommand *exec.Cmd
-	var err error
-	tmpfile, err := os.CreateTemp(os.TempDir(), "granite.tmpfile")
-	if err != nil {
-		return nil, err
-	}
-  defer tmpfile.Close()
+  runner := &InterpretedRunner{
+  	Interpreter: "lua",
+  	FileName:    "main.lua",
+  	Name:        "lua",
+  }
 
-	_, err = tmpfile.WriteString(cb.Text)
-	if err != nil {
-		return nil, err
-	}
-
-  outCommand = exec.Command("lua", tmpfile.Name())
-  outCommand.Env = CreateEnvArray(envVars)
-
-  return outCommand.CombinedOutput()
-}
-
-func isInNvim(cb *codeblock.Codeblock) bool {
-	return cb.Opts[LUARUNNER_OPT_IN_NVIM] == "true"
+  return runner.CreateCommand(v, code, opts, envVars)
 }

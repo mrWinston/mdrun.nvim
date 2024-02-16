@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
 	"github.com/neovim/go-client/nvim"
 )
 
@@ -18,27 +17,28 @@ type CompiledRunner struct {
   Name string
 }
 
-func (cr *CompiledRunner) Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error) {
+func (cr *CompiledRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
 	tmpDirPath, err := os.MkdirTemp(os.TempDir(), fmt.Sprintf("mdrun_%s", cr.Name))
 	if err != nil {
 		return nil, err
 	}
+  executableName := "main"
 	sourcePath := path.Join(tmpDirPath, cr.FileName)
-	compiledPath := path.Join(tmpDirPath, "main")
 
 	sourceFile, err := os.Create(sourcePath)
 	if err != nil {
 		return nil, err
 	}
 
-  _, err = io.WriteString(sourceFile, cb.Text)
-
-  compileOut, err := exec.Command(cr.Compiler, cr.OutputFlag, compiledPath, sourcePath).CombinedOutput()
-  if err != nil {
-    return compileOut, err
+  if _, err = io.WriteString(sourceFile, code); err != nil {
+    return nil, err
   }
-  runCommand := exec.Command(compiledPath)  
+
+  compileCommandString := fmt.Sprintf("%s %s ./%s ./%s", cr.Compiler, cr.OutputFlag, executableName, cr.FileName)
+
+  runCommand := exec.Command("sh", "-c", fmt.Sprintf("%s && ./%s", compileCommandString, executableName))
+  runCommand.Dir = tmpDirPath
   runCommand.Env = CreateEnvArray(envVars)
 
-  return runCommand.CombinedOutput()
+  return runCommand, nil
 }

@@ -1,19 +1,20 @@
 package runner
 
 import (
-	"github.com/mrWinston/mdrun.nvim/pkg/codeblock"
+	"os/exec"
+
 	"github.com/neovim/go-client/nvim"
 )
 
 type RustRunner struct {}
 
-func (cr *RustRunner) Run(v *nvim.Nvim, cb *codeblock.Codeblock, envVars map[string]string) ([]byte, error) {
+func (cr *RustRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
   compiledRunner := &CompiledRunner{
   	Compiler:   "rustc",
   	OutputFlag: "-o",
   	FileName:   "main.rs",
   	Name:       "rust",
   }
-  return compiledRunner.Run(v, cb, envVars)
+  return compiledRunner.CreateCommand(v, code, opts, envVars)
 }
 
