@@ -6,10 +6,10 @@ import (
 	"github.com/neovim/go-client/nvim"
 )
 
-type GoRunner struct{
-  UseGomacro bool
+//go:generate gomodifytags -file $GOFILE -all -add-tags "json,yaml" -transform snakecase -override -w -quiet
+type GoRunner struct {
+	UseGomacro bool `json:"use_gomacro" yaml:"use_gomacro"`
 }
-
 
 func (gr *GoRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
 	interpreter := ""
@@ -22,7 +22,6 @@ func (gr *GoRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]str
 	cmd := &InterpretedRunner{
 		Interpreter: interpreter,
 		FileName:    "main.go",
-		Name:        "go",
 	}
 	return cmd.CreateCommand(v, code, opts, envVars)
 }

@@ -12,12 +12,13 @@ import (
 const (
 	SHELLRUNNER_OPT_WORKDIR               = "CWD"
 	SHELLRUNNER_OPT_WORKDIR_DOCKER_PREFIX = "docker"
+	RUNNER_TYPE_SHELL                     = "ShellRunner"
 )
 
+//go:generate gomodifytags -file $GOFILE -all -add-tags "json,yaml" -transform snakecase -override -w -quiet
 type ShellRunner struct {
-	DefaultShell string
+	DefaultShell string `json:"default_shell" yaml:"default_shell"`
 }
-
 
 func (sh *ShellRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]string, envVars map[string]string) (*exec.Cmd, error) {
 	var outCommand *exec.Cmd
@@ -28,7 +29,7 @@ func (sh *ShellRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]
 	if err != nil {
 		return nil, err
 	}
-  defer tmpfile.Close()
+	defer tmpfile.Close()
 
 	_, err = tmpfile.WriteString(code)
 	if err != nil {
@@ -36,7 +37,7 @@ func (sh *ShellRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]
 	}
 
 	var shellCmd string
-  if strings.HasPrefix(
+	if strings.HasPrefix(
 		opts[SHELLRUNNER_OPT_WORKDIR],
 		SHELLRUNNER_OPT_WORKDIR_DOCKER_PREFIX,
 	) {
@@ -69,7 +70,7 @@ func (sh *ShellRunner) CreateCommand(v *nvim.Nvim, code string, opts map[string]
 	}
 
 	outCommand = exec.Command(sh.DefaultShell, "-i", "-c", shellCmd)
-  outCommand.Env = CreateEnvArray(envVars)
-  
+	outCommand.Env = CreateEnvArray(envVars)
+
 	return outCommand, nil
 }

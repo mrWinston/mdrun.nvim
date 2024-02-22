@@ -7,6 +7,16 @@ Markdown snippet runner for neovim.
 - Evaluate markdown codeblocks
 - Define re-usable env-vars per markdown section
 
+
+## Configuration Options in LUA
+
+```lua
+require('mdrun').setup({
+  stop_signal = "SIGINT", -- Signal to send when attempting to stop a process. one of: [SIGKILL, SIGINT]
+
+})
+```
+
 ## Supported Languages
 
 ### Shell (bash, zsh, sh)

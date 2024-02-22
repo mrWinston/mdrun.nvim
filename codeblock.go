@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mrWinston/mdrun.nvim/pkg/markdown"
 	"github.com/neovim/go-client/nvim"
@@ -23,7 +25,6 @@ type Codeblock struct {
 	Node      *ts.Node
 	Opts      map[string]string
 	Text      string
-	V         *nvim.Nvim
 	Buffer    nvim.Buffer
 }
 
@@ -42,9 +43,22 @@ var (
 	DefaultShell       = "zsh"
 )
 
+func (cb *Codeblock) IsTarget() bool {
+  _, ok := cb.Opts[CB_OPT_SOURCE] 
+  return ok
+}
+
+func (cb *Codeblock) GetId() string {
+  if id, ok := cb.Opts[CB_OPT_ID]; ok {
+    return id
+  }
+  return cb.Opts[CB_OPT_SOURCE]
+}
+
+
 func (cb *Codeblock) Read() error {
 
-	allCodeblocks, err := GetCodeblocks(cb.V)
+	allCodeblocks, err := GetCodeblocks(cb.Buffer)
 	if err != nil {
 		return err
 	}
@@ -84,37 +98,59 @@ func (cb *Codeblock) Read() error {
 	return nil
 }
 
-func (cb *Codeblock) Write() error {
-	curBuf, err := cb.V.CurrentBuffer()
+func (cb *Codeblock) Write(v *nvim.Nvim) error {
+	n := time.Now()
+	// updatedCb, err := cb.getMatchingCodeblock()
+	// if err != nil {
+	//   return err
+	// }
 
-	if err != nil {
-		return err
+  logrus.Debug("Reading lines")
+	codeLines, ok := GetBufferLines(cb.Buffer)
+	if !ok {
+		return fmt.Errorf("No Buffer lines for buffer %d", cb.Buffer)
+	}
+	findString := ""
+	if cb.Opts[CB_OPT_ID] != "" {
+		findString = fmt.Sprintf("%s=%s", CB_OPT_ID, cb.Opts[CB_OPT_ID])
+	} else {
+		findString = fmt.Sprintf("%s=%s", CB_OPT_SOURCE, cb.Opts[CB_OPT_SOURCE])
+	}
+	_, idx, found := lo.FindIndexOf(codeLines, func(elem string) bool {
+		return strings.Contains(elem, findString)
+	})
+	if !found {
+		return fmt.Errorf("Couldn't find codeblock in buffer lines")
 	}
 
-	err = cb.V.SetBufferLines(
-		curBuf,
+	cb.StartLine = idx
+	cb.EndLine = -1
+	for i := idx + 1; i < len(codeLines); i++ {
+		if codeLines[i] == "```" {
+			cb.EndLine = i
+			break
+		}
+	}
+	if cb.EndLine == -1 {
+		return fmt.Errorf("Cound't find endline for codeblock")
+	}
+
+	logrus.Debugf("Getting matching cb took: %s", time.Since(n).String())
+
+  logrus.Debug("Writing lines")
+  err := NvimSetBufferLines(
+    v,
+		cb.Buffer,
 		cb.StartLine,
 		cb.EndLine+1,
-		false,
 		cb.GetMarkdownLines(),
 	)
-	if err != nil {
-		logrus.Errorf("Got error writing lines: %v", err)
-		return err
-	}
-	err = cb.Read()
 	return err
 
 }
 
-func (cb *Codeblock) SetStatus(status string, highlight string) error {
-
-	currentBuffer, err := cb.V.CurrentBuffer()
-	if err != nil {
-		return err
-	}
-
-	namespaceID, err := cb.V.CreateNamespace(EXTMARK_NS)
+func (cb *Codeblock) SetStatus(v *nvim.Nvim, status string, highlight string) error {
+	namespaceID, err := v.CreateNamespace(EXTMARK_NS)
 	if err != nil {
 		return err
 	}
@@ -130,7 +166,7 @@ func (cb *Codeblock) SetStatus(status string, highlight string) error {
 		return err
 	}
 
-	_, err = cb.V.SetBufferExtmark(currentBuffer, namespaceID, cb.StartLine, 0, map[string]interface{}{
+	_, err = v.SetBufferExtmark(cb.Buffer, namespaceID, cb.StartLine, 0, map[string]interface{}{
 		"id":        extmarkID,
 		"virt_text": [][]interface{}{{status, highlight}},
 	})
@@ -138,7 +174,7 @@ func (cb *Codeblock) SetStatus(status string, highlight string) error {
 	return err
 }
 
-func NewCodeblockFromNode(node *ts.Node, v *nvim.Nvim, sourceLines []string) (*Codeblock, error) {
+func NewCodeblockFromNode(node *ts.Node, buf nvim.Buffer, sourceLines []string) (*Codeblock, error) {
 
 	sourceCode := strings.Join(sourceLines, "\n")
 
@@ -154,7 +190,7 @@ func NewCodeblockFromNode(node *ts.Node, v *nvim.Nvim, sourceLines []string) (*C
 		EndCol:    int(node.EndPoint().Column),
 		Text:      node.Content([]byte(sourceCode)),
 		Opts:      make(map[string]string),
-		V:         v,
+		Buffer:    buf,
 	}
 
 	if cb.EndCol == 0 {
@@ -206,16 +242,17 @@ func NewCodeblockFromNode(node *ts.Node, v *nvim.Nvim, sourceLines []string) (*C
 func (cb *Codeblock) GetEnvVars() map[string]string {
 	envMap := map[string]string{}
 	currentNode := cb.Node.Parent()
-	sourceLines, ok := GetBufferLines()
-	lines, err := cb.V.BufferLines(0, 0, -1, false)
-	if err != nil {
+	
+	sourceLines, ok := GetBufferLines(cb.Buffer)
+	if !ok {
+		logrus.Errorf("Couldnnt find text for buffer %v", cb.Buffer)
 		return envMap
 	}
 
 	for currentNode != nil && currentNode.Type() == "section" {
 		childNodes := getChildNodesWithType(currentNode, "fenced_code_block")
 		for _, childNode := range childNodes {
-			childCb, err := NewCodeblockFromNode(childNode, cb.V, lines)
+			childCb, err := NewCodeblockFromNode(childNode, cb.Buffer, sourceLines)
 			if err != nil {
 				continue
 			}
@@ -252,12 +289,27 @@ func (cb *Codeblock) GetMarkdownLines() [][]byte {
 	sb.WriteString("```")
 	sb.WriteString(cb.Language)
 
-	for key, val := range cb.Opts {
+  optionKeys := []string{}
+  for k := range cb.Opts {
+    optionKeys = append(optionKeys, k)
+  }
+  slices.SortFunc(optionKeys, func(a string, b string) int {
+    if a == CB_OPT_ID || a == CB_OPT_SOURCE {
+      return -1
+    }
+    if b == CB_OPT_ID || b == CB_OPT_SOURCE {
+      return 1
+    }
+    return strings.Compare(a, b)
+  })
+
+  for _, key := range optionKeys {
 		sb.WriteString(" ")
 		sb.WriteString(key)
 		sb.WriteString("=")
-		sb.WriteString(val)
-	}
+		sb.WriteString(cb.Opts[key])
+     
+  }
 	newLines = append(newLines, []byte(sb.String()))
 	sb.Reset()
 	for _, line := range strings.Split(cb.Text, "\n") {
@@ -266,8 +318,8 @@ func (cb *Codeblock) GetMarkdownLines() [][]byte {
 	if len(newLines[len(newLines)-1]) == 0 {
 		newLines = newLines[:len(newLines)-1]
 	}
+  
 	newLines = append(newLines, []byte("```"))
-	//	newLines = append(newLines, []byte(""))
 
 	return newLines
 }
@@ -286,11 +338,7 @@ func getChildNodesWithType(node *ts.Node, nodeType string) []*ts.Node {
 	return children
 }
 
-func GetCodeblocks(v *nvim.Nvim) ([]*Codeblock, error) {
-	curBuf, err := v.CurrentBuffer()
-	if err != nil {
-		return nil, err
-	}
+func GetCodeblocks(curBuf nvim.Buffer) ([]*Codeblock, error) {
 	sourceLines, _ := GetBufferLines(curBuf)
 	sourceCode := strings.Join(sourceLines, "\n")
 
@@ -326,7 +374,7 @@ func GetCodeblocks(v *nvim.Nvim) ([]*Codeblock, error) {
 	codeBlocks := []*Codeblock{}
 
 	for _, n := range codeblockNodes {
-		cb, err := NewCodeblockFromNode(n, v, sourceLines)
+		cb, err := NewCodeblockFromNode(n, curBuf, sourceLines)
 		if err != nil {
 			continue
 		}
@@ -336,11 +384,15 @@ func GetCodeblocks(v *nvim.Nvim) ([]*Codeblock, error) {
 }
 
 func FindCodeblockUnderCursor(v *nvim.Nvim) (codeblockUnderCursor *Codeblock, err error) {
-	codeblocks, err := GetCodeblocks(v)
+	currentWindow, err := v.CurrentWindow()
 	if err != nil {
 		return nil, err
 	}
-	currentWindow, err := v.CurrentWindow()
+	currentBuffer, err := v.CurrentBuffer()
+	if err != nil {
+		return nil, err
+	}
+	codeblocks, err := GetCodeblocks(currentBuffer)
 	if err != nil {
 		return nil, err
 	}
