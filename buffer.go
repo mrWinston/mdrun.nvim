@@ -52,7 +52,6 @@ func receiveBufferLine() {
 	lines, ok := BufferLines[int(event.Buffer)]
 	bufLines := make([]string, len(lines))
 	copy(bufLines, lines)
-	log.Debugf("Got bufferline update for buf %d", event.Buffer)
 
 	if !ok {
 		if event.FirstLine != 0 || event.LastLine != -1 {
@@ -88,8 +87,6 @@ func SetBufferLines(buf nvim.Buffer, lines []string) {
 }
 
 func NvimSetBufferLines(v *nvim.Nvim, buf nvim.Buffer, startLine int, endLine int, lines [][]byte) error {
-	log.Debugf("Sending lines, then waiting for buf %d to receive", buf)
-
   blockCtr, ok := bufferUnblockedChannels[int(buf)]
   if ! ok {
     return fmt.Errorf("Writing to buffer that's not initialized yet")
@@ -103,12 +100,10 @@ func NvimSetBufferLines(v *nvim.Nvim, buf nvim.Buffer, startLine int, endLine in
 		false,
 		lines,
 	)
-	log.Debug("unblocked, returning")
 	return err
 }
 
 func GetBufferLines(buf nvim.Buffer) ([]string, bool) {
-  log.Debugf("Getting buflines")
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf("Panic: %v", r)
@@ -117,7 +112,6 @@ func GetBufferLines(buf nvim.Buffer) ([]string, bool) {
 	}()
   blockPtr := bufferUnblockedChannels[int(buf)]
   for blockPtr.Load() != 0 {
-    log.Debug("Waiting for blockPtr to be 0")
     time.Sleep(10 * time.Millisecond)
   }
 	bufferLinesMutex.RLock()

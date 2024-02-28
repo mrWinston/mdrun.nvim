@@ -325,7 +325,7 @@ func main() {
 		p.HandleAutocmd(&plugin.AutocmdOptions{
 			Event:   "BufReadPost",
 			Group:   "mdrun",
-			Pattern: "*",
+			Pattern: "*.md",
 			Nested:  false,
 		}, func() {
 			curBuf, err := p.Nvim.CurrentBuffer()

@@ -4,8 +4,14 @@ Markdown snippet runner for neovim.
 
 ## Features
 
-- Evaluate markdown codeblocks
-- Define re-usable env-vars per markdown section
+- evaluate markdown codeblock in the language of your choice
+- stream stdin and stdout to other codeblocks in real time
+- define env-vars per markdown section
+- run snippets either directly or in a docker/podman container
+- define custom runners for languages not supported out of the box
+
+## Installation
+
 
 
 ## Configuration Options in LUA
@@ -88,3 +94,16 @@ Pi is: 3.141593
 | Rust       | Yes   |
 | Scala      | No   |
 | TypeScript | No   |
+
+
+
+```lua ID=1708957562401 IN_NVIM=true
+f = vim.api.nvim_get_runtime_file("*/mdrun.lua", false)
+vim.print(f)
+
+```
+
+
+```out SOURCE=1708957562401 EXIT_CODE=0 LAST_RUN=2024-02-26T15:33:12+01:00
+Result: <nil>
+```

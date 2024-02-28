@@ -24,7 +24,6 @@ type Config struct {
 
 func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
 	var rawMap map[string]json.RawMessage
-	log.Debug("Unmarshalling stuff")
 
 	err := json.Unmarshal(data, &rawMap)
 	if err != nil {
@@ -76,8 +75,6 @@ func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
 
 	var parsedRunner runner.CodeblockRunner
 
-	log.Debugf("languages: %+v", languages)
-	log.Debugf("runnerType: %+v", runnerType)
 	switch runnerType {
 	case "CompiledRunner":
 		tmpRunner := &runner.CompiledRunner{}
@@ -111,8 +108,6 @@ func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	log.Debug("Parsed runner without error")
-	log.Debugf("parsedRunner: %+v", parsedRunner)
 	rc.Type = runnerType
 	rc.Languages = languages
 	rc.Config = parsedRunner

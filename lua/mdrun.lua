@@ -110,8 +110,8 @@ M.setup = function(opts)
 	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 	-- make sure query output is highlighted with markdown
 	-- vim.treesitter.language.register("bash", "zsh")
-
-	if vim.g.loaded_mdrun_nvim then
+  
+  if vim.g.loaded_mdrun_nvim then
 		return
 	end
 
@@ -121,8 +121,9 @@ M.setup = function(opts)
     endfunction
   
     call remote#host#Register('mdrun', 'x', function('s:RequireMdrun'))
+
     call remote#host#RegisterPlugin('mdrun', '0', [
-    \ {'type': 'autocmd', 'name': 'BufReadPost', 'sync': 0, 'opts': {'group': 'mdrun', 'pattern': '*'}},
+    \ {'type': 'autocmd', 'name': 'BufReadPost', 'sync': 0, 'opts': {'group': 'mdrun', 'pattern': '*.md'}},
     \ {'type': 'function', 'name': 'MdrunConfigure', 'sync': 1, 'opts': {}},
     \ {'type': 'function', 'name': 'MdrunKillCodeblock', 'sync': 0, 'opts': {}},
     \ {'type': 'function', 'name': 'MdrunRunCodeblock', 'sync': 0, 'opts': {}},
@@ -130,8 +131,7 @@ M.setup = function(opts)
   ]])
 	vim.g.loaded_mdrun_nvim = true
 
-  local out = vim.fn.MdrunConfigure(vim.json.encode(M.config))
-  vim.print(out)
+  vim.fn.MdrunConfigure(vim.json.encode(M.config))
 end
 
 return M
