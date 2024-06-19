@@ -20,6 +20,7 @@ type Config struct {
 	StopSignal    string                   `json:"stop_signal" yaml:"stop_signal"`
 	DockerRuntime string                   `json:"docker_runtime" yaml:"docker_runtime"`
 	RunnerConfigs map[string]*RunnerConfig `json:"runner_configs" yaml:"runner_configs"`
+	SocketDir     string                   `json:"socket_dir" yaml:"socket_dir"`
 }
 
 func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
@@ -66,7 +67,6 @@ func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
 			image = ""
 		}
 	}
-  
 
 	configRaw, ok := rawMap["config"]
 	if !ok {
@@ -111,7 +111,7 @@ func (rc *RunnerConfig) UnmarshalJSON(data []byte) error {
 	rc.Type = runnerType
 	rc.Languages = languages
 	rc.Config = parsedRunner
-  rc.Image = image
+	rc.Image = image
 
 	return nil
 }

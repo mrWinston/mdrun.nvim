@@ -11,11 +11,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var BufferLines map[int][]string = map[int][]string{}
-var bufferLinesMutex sync.RWMutex = sync.RWMutex{}
+var BufferLines = map[int][]string{}
+var bufferLinesMutex = sync.RWMutex{}
 
 var bufLineEventsQueue chan *nvim.BufLinesEvent = make(chan *nvim.BufLinesEvent)
-var bufferUnblockedChannels map[int]*atomic.Int32 = map[int]*atomic.Int32{}
+var bufferUnblockedChannels = map[int]*atomic.Int32{}
 
 func init() {
 	go bufferLinesEventLoop()
@@ -37,8 +37,7 @@ func HandleBufferLinesEvent(nv *nvim.Nvim, buf nvim.Buffer, changedtick int64, f
 func bufferLinesEventLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("Panic: %v", r)
-			os.Exit(1)
+			log.Fatalf("Panic: %v", r)
 		}
 	}()
 	for {
@@ -67,7 +66,11 @@ func receiveBufferLine() {
 	newLines := []string{}
 	newLines = append(newLines, bufLines[:event.FirstLine]...)
 	newLines = append(newLines, event.LineData...)
-	newLines = append(newLines, bufLines[event.LastLine:]...)
+  if event.LastLine != -1 {
+    newLines = append(newLines, bufLines[event.LastLine:]...)
+  } else {
+    log.Warnf("lastline from event is -1 weirdly: %+v", event)
+  }
 
 	SetBufferLines(event.Buffer, newLines)
 	blockCount, ok := bufferUnblockedChannels[int(event.Buffer)]
@@ -110,7 +113,11 @@ func GetBufferLines(buf nvim.Buffer) ([]string, bool) {
 			os.Exit(1)
 		}
 	}()
-  blockPtr := bufferUnblockedChannels[int(buf)]
+  blockPtr, ok := bufferUnblockedChannels[int(buf)]
+  if ! ok {
+    log.Warnf("Trying to read from buffer that's not yet initialized")
+    return []string{}, false
+  }
   for blockPtr.Load() != 0 {
     time.Sleep(10 * time.Millisecond)
   }

@@ -16,19 +16,24 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var GLYPHS_CLOCK_ANIMATION []string = []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
-var GLYPH_CHECKMARK string = ""
-var GLYPH_ERROR string = "󱂑"
-var HL_GROUP_ERROR string = "DiagnosticError"
-var HL_GROUP_OK string = "DiagnosticOk"
-var HL_GROUP_INFO string = "DiagnosticInfo"
 
-var CodeRunnerConfigs *Config
+var clockAnimationGlyphs = []string{"󱑖", "󱑋", "󱑌", "󱑍", "󱑎", "󱑏", "󱑐", "󱑑", "󱑒", "󱑓", "󱑔", "󱑕"}
+var checkmarkGlyph = ""
+var errorGlyph = "󱂑"
+var highlightGroupError = "DiagnosticError"
+var highlightGroupOk = "DiagnosticOk"
+var highlightGroupInfo = "DiagnosticInfo"
 
-const DOCKER_RUNTIME_DOCKER = "docker"
-const DOCKER_RUNTIME_PODMAN = "podman"
+var codeRunnerConfigs *Config
 
-func Configure(v *nvim.Nvim, args []string) error {
+// ContainerRuntimeDocker is the name of the docker container runtime
+const ContainerRuntimeDocker = "docker"
+
+// ContainerRuntimePodman is the name of the podman container runtime
+const ContainerRuntimePodman = "podman"
+
+// Configure receives config table from lua and configures the runners accordingly. Returns an error when the config can't be parsed
+func Configure(_ *nvim.Nvim, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("Need exactly 1 argument")
 	}
@@ -37,23 +42,26 @@ func Configure(v *nvim.Nvim, args []string) error {
 	if err != nil {
 		return err
 	}
-	CodeRunnerConfigs = config
+	codeRunnerConfigs = config
 	return nil
 }
 
-func KillCodeblock(v *nvim.Nvim, args []string) {
+// KillCodeblock stops the process associated with  a running codeblock. If the
+// codeblock doesn't have an associated process, this is a no-op
+func KillCodeblock(v *nvim.Nvim, _ []string) {
 	cb, err := FindCodeblockUnderCursor(v)
 	if err != nil {
 		log.Errorf("No Codeblock under cursor found: %v", err)
 	}
 
-	id := cb.GetId()
+  
+	id := cb.GetID()
 	if id == "" {
 		log.Error("Can't get cb id")
 		return
 	}
 
-	streamer, ok := GetStreamerWithId(id)
+	streamer, ok := GetStreamerWithID(id)
 	if !ok {
 		log.Warnf("Didn't find a streamer associated with the codeblock")
 	}
@@ -64,20 +72,42 @@ func KillCodeblock(v *nvim.Nvim, args []string) {
 	}
 }
 
-func RunCodeblock(v *nvim.Nvim, args []string) {
+func handleSession(_ *nvim.Nvim, cb *Codeblock) {
+	sessionID := fmt.Sprintf("session_%s_%s", cb.Language, cb.Opts["SESSION"])
+	_, ok := GetStreamerWithID(sessionID)
+	if !ok {
+		// create new one
+		_, found := codeRunnerConfigs.RunnerConfigs[cb.Language]
+		if !found {
+			log.Errorf("No runner for language %s", cb.Language)
+		}
+
+		_ = fmt.Sprintf("socat -u unix-listen:%s/%s.sock,fork - | %s", codeRunnerConfigs.SocketDir, sessionID, codeRunnerConfigs.RunnerConfigs[""])
+	}
+}
+
+// revive:disable:function-length
+// revive:disable:cognitive-complexity
+// revive:disable:cyclomatic
+// RunCodeblock looks up the codeblock under the cursor and runs it according to the configuration. Doesn't receive any args.
+func RunCodeblock(v *nvim.Nvim, _ []string) {
+  t := NewTimer(log.StandardLogger())
 	currentBuffer, err := v.CurrentBuffer()
 	if err != nil {
 		log.Errorf("Can't communicate with nvim: %v", err)
 		return
 	}
+  t.Restart("Got current Buffer")
+  // 2seconds
 	codeblockUnderCursor, err := FindCodeblockUnderCursor(v)
 	if err != nil {
 		log.Errorf("No codeblock under cursor found: %v", err)
 		return
 	}
+  t.Restart("Got Codeblock")
 
 	var codeRunner runner.CodeblockRunner
-	for _, rc := range CodeRunnerConfigs.RunnerConfigs {
+	for _, rc := range codeRunnerConfigs.RunnerConfigs {
 		if lo.Contains(rc.Languages, codeblockUnderCursor.Language) {
 			codeRunner = rc.Config
 			break
@@ -87,7 +117,9 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 		log.Errorf("Couldn't find runner for language: %s", codeblockUnderCursor.Language)
 		return
 	}
+  t.Restart("Got coderunner")
 
+  // 2s block
 	if _, ok := codeblockUnderCursor.Opts["ID"]; !ok {
 		codeblockUnderCursor.Opts["ID"] = fmt.Sprintf("%d", time.Now().UnixMilli())
 		lines, ok := GetBufferLines(currentBuffer)
@@ -102,6 +134,12 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 			log.Errorf("Coulnd't update source codeblock id: %v", err)
 			return
 		}
+	}
+  t.Restart("Set ID for CB under Cursor")
+
+	if _, ok := codeblockUnderCursor.Opts["SESSION"]; ok {
+		handleSession(v, codeblockUnderCursor)
+		return
 	}
 
 	outlanguage, ok := codeblockUnderCursor.Opts["OUT"]
@@ -122,10 +160,13 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 			return
 		}
 	}
+  t.Restart("Got target CB")
 
 	targetCodeBlock.Language = outlanguage
 
+  // 2s
 	envVars := codeblockUnderCursor.GetEnvVars()
+  t.Restart("Got Env Vars CB")
 	if targetCodeBlock.Text != "" {
 		targetCodeBlock.Text = ""
 		log.Debug("Right before emptying target")
@@ -133,8 +174,8 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 			log.Errorf("Couldn't write codeblock our: %v", err)
 			return
 		}
-
 	}
+  t.Restart("Emptied target CB")
 
 	cmd, err := codeRunner.CreateCommand(v, codeblockUnderCursor.Text, codeblockUnderCursor.Opts, envVars)
 	if err != nil {
@@ -168,9 +209,9 @@ func RunCodeblock(v *nvim.Nvim, args []string) {
 	if err != nil {
 		log.Errorf("Error starting codeblock: %v", err)
 	}
-
 }
 
+// NewTargetCodeblock create a new out codeblock for the given codeblock and returns it.
 func NewTargetCodeblock(codeblockUnderCursor *Codeblock, v *nvim.Nvim) (*Codeblock, error) {
 	log.Debugf("Need to create target cb.")
 	codeBlockID := codeblockUnderCursor.Opts["ID"]
@@ -226,8 +267,9 @@ func NewTargetCodeblock(codeblockUnderCursor *Codeblock, v *nvim.Nvim) (*Codeblo
 	return targetCodeBlock, nil
 }
 
+// GetTargetCodeblock finds the out codeblock for this codeblock. Returns nil when nothing is found.
 func (cb *Codeblock) GetTargetCodeblock() (*Codeblock, error) {
-	if cb.Opts[CB_OPT_ID] == "" {
+	if cb.Opts[CbOptID] == "" {
 		return nil, fmt.Errorf("Can't get target of nodeblock without id")
 	}
 	codeblocks, err := GetCodeblocks(cb.Buffer)
@@ -239,9 +281,9 @@ func (cb *Codeblock) GetTargetCodeblock() (*Codeblock, error) {
 	}
 
 	for _, currentBlock := range codeblocks {
-		id, ok := currentBlock.Opts[CB_OPT_SOURCE]
+		id, ok := currentBlock.Opts[CbOptSource]
 
-		if ok && id == cb.Opts[CB_OPT_ID] {
+		if ok && id == cb.Opts[CbOptID] {
 			target = currentBlock
 			break
 		}
@@ -250,12 +292,13 @@ func (cb *Codeblock) GetTargetCodeblock() (*Codeblock, error) {
 	return target, nil
 }
 
+// WrapInContainer modifies a given command so that it is run in the container runtime specified in the config
 func WrapInContainer(originalCommand *exec.Cmd, cb *Codeblock) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 	image := cb.Opts["IMAGE"]
 	if image == "" {
 		var ok bool
-		for _, v := range CodeRunnerConfigs.RunnerConfigs {
+		for _, v := range codeRunnerConfigs.RunnerConfigs {
 			if lo.Contains(v.Languages, cb.Language) {
 				image = v.Image
 				ok = true
@@ -273,18 +316,18 @@ func WrapInContainer(originalCommand *exec.Cmd, cb *Codeblock) (*exec.Cmd, error
 	arguments := []string{}
 	arguments = append(arguments, "run", "--rm")
 
-	if CodeRunnerConfigs.DockerRuntime == DOCKER_RUNTIME_PODMAN {
+	if codeRunnerConfigs.DockerRuntime == ContainerRuntimePodman {
 		arguments = append(arguments, "--volume", fmt.Sprintf("%s:%s:z", originalCommand.Dir, inDockerWorkdir))
 	} else {
 		arguments = append(arguments, "--volume", fmt.Sprintf("%s:%s", originalCommand.Dir, inDockerWorkdir))
-  }
+	}
 
 	arguments = append(arguments, "--workdir", inDockerWorkdir)
 	arguments = append(arguments, image)
 
 	arguments = append(arguments, originalCommand.Args...)
 
-	cmd = exec.Command(CodeRunnerConfigs.DockerRuntime, arguments...)
+	cmd = exec.Command(codeRunnerConfigs.DockerRuntime, arguments...)
 
 	return cmd, nil
 }
@@ -316,7 +359,6 @@ func main() {
 	log.SetReportCaller(true)
 
 	plugin.Main(func(p *plugin.Plugin) error {
-
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunRunCodeblock"}, RunCodeblock)
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunKillCodeblock"}, KillCodeblock)
 		p.HandleFunction(&plugin.FunctionOptions{Name: "MdrunConfigure"}, Configure)
@@ -340,7 +382,6 @@ func main() {
 				return
 			}
 			log.Infof("Subscribed for updates from buffer %d", curBuf)
-
 		})
 
 		return nil

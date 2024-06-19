@@ -14,47 +14,50 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var TICKER_UPDATE_INTERVAL = 100 * time.Millisecond
+var tickerUpdateInterval = 100 * time.Millisecond
 
-var RunningStreamers map[string]*Streamer = map[string]*Streamer{}
-var RunningStreamersMutext *sync.RWMutex = &sync.RWMutex{}
+var runningStreamers = map[string]*Streamer{}
+var runningStreamersMutext = &sync.RWMutex{}
 
-func RemoveStreamerWithId(id string) {
-  RunningStreamersMutext.Lock()
-  defer RunningStreamersMutext.Unlock()
-  delete(RunningStreamers, id)
+func removeStreamerWithID(id string) {
+	runningStreamersMutext.Lock()
+	defer runningStreamersMutext.Unlock()
+	delete(runningStreamers, id)
 }
 
-func AddStreamer(st *Streamer) error {
-  RunningStreamersMutext.Lock()
-  defer RunningStreamersMutext.Unlock()
-  _, ok := RunningStreamers[st.Source.GetId()]
-  if ok {
-    return fmt.Errorf("Codeblock with id %s already running.", st.Source.Opts[CB_OPT_ID])
-  }
-  RunningStreamers[st.Source.GetId()] = st
-  return nil
+// AddStreamer adds the streamer to the list of streamers, but only if it's not already running
+func AddStreamer(s *Streamer) error {
+	runningStreamersMutext.Lock()
+	defer runningStreamersMutext.Unlock()
+	_, ok := runningStreamers[s.Source.GetID()]
+	if ok {
+		return fmt.Errorf("codeblock with id %s already running", s.Source.Opts[CbOptID])
+	}
+	runningStreamers[s.Source.GetID()] = s
+	return nil
 }
 
-func GetStreamerWithId(id string) (st *Streamer, ok bool) {
-  RunningStreamersMutext.RLock()
-  defer RunningStreamersMutext.RUnlock()
-  st, ok = RunningStreamers[id]
-  return st, ok
+// GetStreamerWithID returns the streamer with the given ID
+func GetStreamerWithID(id string) (st *Streamer, ok bool) {
+	runningStreamersMutext.RLock()
+	defer runningStreamersMutext.RUnlock()
+	st, ok = runningStreamers[id]
+	return st, ok
 }
 
-func (st *Streamer) Kill() error {
-  if st.Command.Process == nil {
-    // command hasn't started yet
-    return fmt.Errorf("Can't kill a process that has not started yet")
-  }
-  log.Debugf("Sending signal to kill process: %d", st.Command.Process.Pid)
-  return syscall.Kill(-st.Command.Process.Pid, syscall.SIGINT)
+// Kill terminates this streamer by sending SIGINT to it
+func (s *Streamer) Kill() error {
+	if s.Command.Process == nil {
+		// command hasn't started yet
+		return fmt.Errorf("Can't kill a process that has not started yet")
+	}
+	log.Debugf("Sending signal to kill process: %d", s.Command.Process.Pid)
+	return syscall.Kill(-s.Command.Process.Pid, syscall.SIGINT)
 
-//  return st.Command.Process.Kill()
 }
 
-
+// Streamer wraps the execution of an exec.Cmd and allows access to its
+// stdin/out/err while it is running
 type Streamer struct {
 	V       *nvim.Nvim
 	Source  *Codeblock
@@ -67,8 +70,16 @@ type Streamer struct {
 	ticker               *time.Ticker
 	writeDoneChan        chan int
 	writeStopChan        chan int
+	stdIn                io.Writer
 }
 
+// Send writes the given string to the stdin of the streamer
+func (s *Streamer) Send(msg string) error {
+  _, err := s.stdIn.Write([]byte(msg))
+  return err
+}
+
+// Run starts execution of this streamer
 func (s *Streamer) Run() error {
 	s.stdOutChan = make(chan string)
 	s.stdErrChan = make(chan string)
@@ -76,8 +87,8 @@ func (s *Streamer) Run() error {
 	s.writeDoneChan = make(chan int)
 	s.writeStopChan = make(chan int)
 
-	s.ticker = time.NewTicker(TICKER_UPDATE_INTERVAL)
-  s.Command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	s.ticker = time.NewTicker(tickerUpdateInterval)
+	s.Command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := s.Command.StdoutPipe()
 	if err != nil {
@@ -85,6 +96,10 @@ func (s *Streamer) Run() error {
 	}
 
 	stderr, err := s.Command.StderrPipe()
+	if err != nil {
+		return err
+	}
+  s.stdIn, err = s.Command.StdinPipe()
 	if err != nil {
 		return err
 	}
@@ -111,13 +126,13 @@ func (s *Streamer) updateStatusLoop() {
 		case <-s.updateStatusStopChan:
 			return
 		case <-s.ticker.C:
-			curGlyph := GLYPHS_CLOCK_ANIMATION[currentRun%len(GLYPHS_CLOCK_ANIMATION)]
-			err := s.Source.SetStatus(s.V, curGlyph, HL_GROUP_INFO)
+			curGlyph := clockAnimationGlyphs[currentRun%len(clockAnimationGlyphs)]
+			err := s.Source.SetStatus(s.V, curGlyph, highlightGroupInfo)
 			if err != nil {
 				log.Errorf("couldn't set extmark: %v", err)
 			}
 
-			err = s.Target.SetStatus(s.V, curGlyph, HL_GROUP_INFO)
+			err = s.Target.SetStatus(s.V, curGlyph, highlightGroupInfo)
 			if err != nil {
 				log.Errorf("couldn't set extmark: %v", err)
 			}
@@ -141,26 +156,26 @@ func (s *Streamer) waitForCompletion() {
 	var outGlyph string
 	var outHighlight string
 	if err != nil {
-		outGlyph = GLYPH_ERROR
-		outHighlight = HL_GROUP_ERROR
+		outGlyph = errorGlyph
+		outHighlight = highlightGroupError
 	} else {
-		outGlyph = GLYPH_CHECKMARK
-		outHighlight = HL_GROUP_OK
+		outGlyph = checkmarkGlyph
+		outHighlight = highlightGroupOk
 	}
 
 	log.Infof("Completed wait: %s", err)
 
 
-	s.Source.Read()
-	err = s.Source.Write(s.V)
-	if err != nil {
-		log.Errorf("Error writing Source: %v", err)
-	}
+  s.Source.GetID()
+  target, err := FindCodeblockByOpt(CbOptSource, s.Source.GetID(), s.Source.Buffer)
+  if err != nil {
+    log.Errorf("Coulnd't find target codeblock: %v", err)
+    return
+  }
+  s.Target = target
 
-	s.Target.Read()
-
-	s.Target.Opts[CB_OPT_LAST_RUN] = time.Now().Format(time.RFC3339)
-  s.Target.Opts["EXIT_CODE"] = fmt.Sprintf("%d", s.Command.ProcessState.ExitCode())
+	s.Target.Opts[CbOptLastRun] = time.Now().Format(time.RFC3339)
+	s.Target.Opts["EXIT_CODE"] = fmt.Sprintf("%d", s.Command.ProcessState.ExitCode())
 
 	err = s.Target.Write(s.V)
 	if err != nil {
@@ -175,7 +190,7 @@ func (s *Streamer) waitForCompletion() {
 	if err != nil {
 		log.Errorf("Couldn't set status on Source codeblock %v", err)
 	}
-  RemoveStreamerWithId(s.Target.GetId())
+	removeStreamerWithID(s.Target.GetID())
 }
 
 func (s *Streamer) UpdateLoop() {
@@ -234,18 +249,7 @@ func readerToChannel(reader io.Reader, outChannel chan<- string) {
 		}
 
 		buf = lo.Replace(buf, 0xd, 0xa, -1)
-    outChannel <- string(buf[0:n])
-
-		// for i := n - 1; i >= 0; i-- {
-		// 	if buf[i] == 0xa {
-		// 		line = append(line, buf[0:i+1]...)
-		// 		log.Debugf("Sending for printing: '%s'", string(line))
-		// 		outChannel <- string(line)
-		// 		line = make([]byte, 0, 1024)
-		// 		copy(line, buf[i+1:n])
-		// 		break
-		// 	}
-		// }
+		outChannel <- string(buf[0:n])
 	}
 }
 

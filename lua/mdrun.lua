@@ -26,13 +26,24 @@ M.config = {
 			},
 		},
 		golang = {
-			type = "GoRunner",
+			type = "InterpretedRunner",
 			languages = { "go" },
       image = "golang",
 			config = {
-				use_gomacro = true,
+        interpreter = "gomacro",
+        repl = "gomacro -s",
+        file_name = "main.go",
 			},
 		},
+    graphviz = {
+      type = "InterpretedRunner",
+      languages = { "dot" },
+      image = "tsub/graph-easy",
+      config = {
+				interpreter = "graph-easy",
+				file_name = "main.dot",
+      }
+    },
 		haskell = {
 			type = "CompiledRunner",
 			languages = { "haskell" },
@@ -57,6 +68,7 @@ M.config = {
       image = "denoland/deno:alpine",
 			config = {
 				interpreter = "deno run",
+        repl = "deno",
 				file_name = "main.js",
 			},
 		},
@@ -74,6 +86,7 @@ M.config = {
       image = "python",
 			config = {
 				interpreter = "python",
+        repl = "python",
 				file_name = "main.py",
 			},
 		},
@@ -100,6 +113,7 @@ M.config = {
       image = "denoland/deno:alpine",
 			config = {
 				interpreter = "deno run",
+        repl = "deno",
 				file_name = "main.ts",
 			},
 		},
@@ -110,7 +124,6 @@ M.setup = function(opts)
 	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 	-- make sure query output is highlighted with markdown
 	-- vim.treesitter.language.register("bash", "zsh")
-  
   if vim.g.loaded_mdrun_nvim then
 		return
 	end
@@ -132,6 +145,14 @@ M.setup = function(opts)
 	vim.g.loaded_mdrun_nvim = true
 
   vim.fn.MdrunConfigure(vim.json.encode(M.config))
+end
+
+M.init = function()
+end
+
+M.run_codeblock_under_cursor = function()
+  vim.print("Running codeblock")
+  vim.fn.MdrunRunCodeblock()
 end
 
 return M
